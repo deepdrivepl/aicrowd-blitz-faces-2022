@@ -3,7 +3,7 @@
 
 # In[1]:
 
-
+import os
 import timm # !pip install git+https://github.com/rwightman/pytorch-image-models
 from tqdm import tqdm
 
@@ -42,15 +42,10 @@ import random
 
 import numpy as np
 
-
-
-
-batch_size_freezed = 160
+batch_size_freezed = 128
 batch_size_unfreezed = 1
 train_size=384
 test_size=384
-
-
 
 def random_erase(img):
     # img = np.array(pilimg)
@@ -84,45 +79,42 @@ def get_target_face(face_no, target_image):
     return target_face
 
 class FaceDataset(torch.utils.data.Dataset):
-    def __init__(self, path, transform):
+    def __init__(self, path, transform,erase=True):
         self.transform = transform
         self.path = path
         
         self.images = glob(self.path+'/*.jpg')
-        self.images_loaded = [cv2.imread(_) for _ in self.images]
-        # self.counter=0
+        self.counter=0
+        self.erase=erase
 
     def __len__(self):
         return len(self.images)*100
-        # return len(self.images)
 
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
-        
-        # idx = self.counter
-        # self.counter+=1
-        # if self.counter>=len(self.images)*100:
-        #     self.counter = 0
 
         img_id = idx//100
         face_in_img = idx - 100*img_id
 
-        # image100 = cv2.imread(self.images[img_id])
-        image100 = self.images_loaded[img_id]
+        image100 = cv2.imread(self.images[img_id])
         image = get_target_face(face_in_img,image100)
         
                 
         img_id2 = random.randint(0,len(self.images)-1)
         face_in_img2 = random.randint(0,99)
 
-        # image100_2 = cv2.imread(self.images[img_id2])
-        image100_2 = self.images_loaded[img_id2]
+        image100_2 = cv2.imread(self.images[img_id2])
         image2 = get_target_face(face_in_img2,image100_2)
         
-        image_a = random_erase(image)
-        image_p = random_erase(image)
-        image_n = random_erase(image2)
+        if self.erase:
+            image_a = random_erase(image)
+            image_p = random_erase(image)
+            image_n = random_erase(image2)
+        else:
+            image_a = Image.fromarray(image)
+            image_p = Image.fromarray(image)
+            image_n = Image.fromarray(image2)
 
         if self.transform is not None:
             image_a = self.transform(image_a)
@@ -146,7 +138,7 @@ class FaceDataset(torch.utils.data.Dataset):
 
 
 augmentations = A.Compose(
-                [A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.1, rotate_limit=1, p=0.8),
+                [A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.5, rotate_limit=20, p=0.8),
                 A.RGBShift(r_shift_limit=40, g_shift_limit=40, b_shift_limit=40, p=0.9),
                 A.HorizontalFlip(p=0.5),
                 A.OneOf([
@@ -362,11 +354,11 @@ class FaceRecognition(LightningModule):
         # print("\ntraining_step")
         return self._step('train', batch, batch_idx)
     
-    # def validation_step(self, batch, batch_idx):
-    #     # print("\nvalidation_step")
-    #     with torch.no_grad():
-    #         output = self._step('val', batch, batch_idx)
-    #         return output
+    def validation_step(self, batch, batch_idx):
+        # print("\nvalidation_step")
+        with torch.no_grad():
+            output = self._step('val', batch, batch_idx)
+            return output
     
     def configure_optimizers(self):
         d=dict()
@@ -379,7 +371,7 @@ class FaceRecognition(LightningModule):
         total_steps = self.epochs * len(self.train_dataset)//self.batch_size
         print("total_steps:",total_steps) #drop last = True
 
-        pct_start = 0.2
+        pct_start = 0.1
         div_factor = 100
         final_div_factor = 100
         d["lr_scheduler"] = {"scheduler": torch.optim.lr_scheduler.OneCycleLR(d['optimizer'],
@@ -398,11 +390,15 @@ class FaceRecognition(LightningModule):
         return self.validation_step(batch, batch_idx)
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=12, shuffle=True,drop_last=False)
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=12, shuffle=True,drop_last=True)
 
-    # def val_dataloader(self):
-    #     return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=12)
+    def val_dataloader(self):
+        return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=12)
 
+    def predict_batch_exp(self, batch):
+        x = self.net[0](batch)
+        y = [_(x) for _ in self.net[1:]]
+        return prediction2label(y[0]), torch.nn.functional.softmax(y[1]), torch.nn.functional.softmax(y[2])
 
 
 
@@ -418,69 +414,48 @@ else:
 
 
 backbone='xcit_tiny_12_p8_384_dist'
-net = getModel(backbone, train_size)
-
-
-
-freezed_epochs = 20
-unfreezed_epochs = 2
-lr_freezed = 0.03
-lr_unfreezed = 1e-6
-
-
+net = torch.load(backbone+'-tuned.pt')
 
 facerec = FaceRecognition(net, train_size=train_size, test_size=test_size,
                                 transform_train=transform_train,
                                 transform_val=transform_val,
-                                lr=lr_freezed,
+                                lr=0.001,
                                 batch_size=batch_size_freezed)
 
 
-facerec.freeze(freezed_epochs)
-lr_monitor = pytorch_lightning.callbacks.LearningRateMonitor(logging_interval='step',
-                                                            log_momentum=True)
-logger = TensorBoardLogger("lightning_logs", name=backbone, default_hp_metric=False, log_graph=True)
+facerec.eval()
+facerec=facerec.cuda()
 
-trainer = Trainer(gpus=1,
-                  max_epochs=freezed_epochs,
-                  amp_backend='native',
-                  precision=16,
-                  callbacks=[lr_monitor],
-                #   limit_val_batches=1
-                  logger=logger)
-trainer.fit(facerec)
-del trainer
+predictions = {"ImageID":[], "target":[]}
 
-torch.save(facerec.net,backbone+'-transfer.pt')
+with torch.no_grad():
+    image_ids = os.listdir("data/missing")
 
 
-facerec.lr = lr_unfreezed
-facerec.unfreeze(unfreezed_epochs)
 
-facerec.batch_size = batch_size_unfreezed
+    
 
-ckpt = checkpoint_callback = pytorch_lightning.callbacks.model_checkpoint.ModelCheckpoint(monitor='val/loss',
-                                             mode='min',
-                                             save_top_k=1,
-                                             verbose=False,
-                                             filename=backbone+'-epoch{epoch:02d}-age-{val/loss:.6f}',
-                                             auto_insert_metric_name=False)
+    for img_id in tqdm(image_ids):
+        print(img_id,'data/target/'+img_id)
 
+        image100 = cv2.imread('data/target/'+img_id)
+        images = torch.stack([transform_val(Image.fromarray(get_target_face(_,image100))) for _ in range(100)]).cuda()
+        print(images.shape)
+        embs=facerec(images).cpu()
 
-lr_monitor = pytorch_lightning.callbacks.LearningRateMonitor(logging_interval='step',
-                                                             log_momentum=True)
+        fn='data/missing/'+img_id
+        img = cv2.imread(fn)
+        img = transform_val(Image.fromarray(img))
 
-logger = TensorBoardLogger("lightning_logs", name=backbone, default_hp_metric=False, log_graph=True)
+        embedding = facerec(torch.unsqueeze(img, 0).cuda()).cpu()
 
-trainer = Trainer(
-    gpus=1,
-    max_epochs=unfreezed_epochs,
-    amp_backend='native',
-    precision=16,
-    callbacks=[ckpt, lr_monitor],
-    logger=logger
-)
-trainer.fit(facerec)
-del trainer
+        ab=torch.abs(embs-embedding)
+        ab = torch.mean(ab,axis=1).cpu()
+        min_mse_face_no = torch.argmin(ab)
+        print(img_id,min_mse_face_no)
+        predictions['ImageID'].append(img_id.replace(".jpg", ""))
+        predictions['target'].append(min_mse_face_no)
 
-torch.save(facerec.net,backbone+'-tuned.pt')
+    submission = pd.DataFrame(predictions)
+    submission.to_csv(os.path.join("assets", "submission.csv"), index=False)
+
