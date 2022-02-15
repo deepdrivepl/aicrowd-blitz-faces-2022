@@ -1,0 +1,6 @@
+*.pt
+*.ckpt
+lightning_logs/
+.ipynb_checkpoints/
+assets
+data
