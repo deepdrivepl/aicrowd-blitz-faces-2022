@@ -45,10 +45,10 @@ import numpy as np
 
 
 
-batch_size_freezed = 160
-batch_size_unfreezed = 1
-train_size=384
-test_size=384
+batch_size_freezed = 32
+batch_size_unfreezed = 1 
+train_size=224
+test_size=224
 
 
 
@@ -93,8 +93,7 @@ class FaceDataset(torch.utils.data.Dataset):
         # self.counter=0
 
     def __len__(self):
-        return len(self.images)*100
-        # return len(self.images)
+        return len(self.images)
 
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
@@ -113,12 +112,15 @@ class FaceDataset(torch.utils.data.Dataset):
         image = get_target_face(face_in_img,image100)
         
                 
-        img_id2 = random.randint(0,len(self.images)-1)
-        face_in_img2 = random.randint(0,99)
+        # img_id2 = random.randint(0,len(self.images)-1)
+        _ids = list(range(0,100))
+        _ids.remove(face_in_img)
+        face_in_img2 = random.choice(_ids)
 
         # image100_2 = cv2.imread(self.images[img_id2])
-        image100_2 = self.images_loaded[img_id2]
-        image2 = get_target_face(face_in_img2,image100_2)
+        # image100_2 = self.images_loaded[img_id2]
+        # image2 = get_target_face(face_in_img2,image100_2)
+        image2 = get_target_face(face_in_img2,image100)
         
         image_a = random_erase(image)
         image_p = random_erase(image)
@@ -137,8 +139,6 @@ class FaceDataset(torch.utils.data.Dataset):
 
     def get_counts(self):
         return collections.defaultdict(int, self.dataframe.age.value_counts().to_dict())
-
-
 
 
 
@@ -181,7 +181,10 @@ transform_val = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))])
 
-
+# for f in FaceDataset('data/target', transform=transform_train):
+#     print(f)
+#     break
+# exit(1)
 
 class UnNormalize(object):
     def __init__(self, mean, std):
@@ -221,7 +224,7 @@ def getModel(backbone, train_size):
 
     model.append(nn.Sequential(torch.nn.LayerNorm([in_features, ]),
                           nn.Dropout(0.5),
-                          nn.Linear(in_features, 128)))
+                          nn.Linear(in_features, 512)))
     return model
 
 
@@ -398,7 +401,7 @@ class FaceRecognition(LightningModule):
         return self.validation_step(batch, batch_idx)
 
     def train_dataloader(self):
-        return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=12, shuffle=True,drop_last=False)
+        return DataLoader(self.train_dataset, batch_size=self.batch_size, num_workers=12, shuffle=True,drop_last=True)
 
     # def val_dataloader(self):
     #     return DataLoader(self.val_dataset, batch_size=self.batch_size, num_workers=12)
@@ -417,14 +420,14 @@ else:
 
 
 
-backbone='xcit_tiny_12_p8_384_dist'
+backbone='vit_base_patch8_224'
 net = getModel(backbone, train_size)
 
 
 
-freezed_epochs = 20
-unfreezed_epochs = 2
-lr_freezed = 0.03
+freezed_epochs = 50
+unfreezed_epochs = 50
+lr_freezed = 1e-3
 lr_unfreezed = 1e-6
 
 
@@ -448,11 +451,12 @@ trainer = Trainer(gpus=1,
                   callbacks=[lr_monitor],
                 #   limit_val_batches=1
                   logger=logger)
-trainer.fit(facerec)
+#trainer.fit(facerec)
 del trainer
 
-torch.save(facerec.net,backbone+'-transfer.pt')
 
+#torch.save(facerec.net,backbone+'-transfer.pt')
+facerec.net = torch.load(backbone+'-transfer.pt')
 
 facerec.lr = lr_unfreezed
 facerec.unfreeze(unfreezed_epochs)

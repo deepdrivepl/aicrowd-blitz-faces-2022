@@ -42,10 +42,10 @@ import random
 
 import numpy as np
 
-batch_size_freezed = 128
-batch_size_unfreezed = 1
-train_size=384
-test_size=384
+batch_size_freezed = 256
+batch_size_unfreezed = 32
+train_size=224
+test_size=224
 
 def random_erase(img):
     # img = np.array(pilimg)
@@ -413,7 +413,7 @@ else:
 
 
 
-backbone='xcit_tiny_12_p8_384_dist'
+backbone='vit_base_patch8_224'
 net = torch.load(backbone+'-tuned.pt')
 
 facerec = FaceRecognition(net, train_size=train_size, test_size=test_size,
@@ -439,9 +439,15 @@ with torch.no_grad():
         print(img_id,'data/target/'+img_id)
 
         image100 = cv2.imread('data/target/'+img_id)
-        images = torch.stack([transform_val(Image.fromarray(get_target_face(_,image100))) for _ in range(100)]).cuda()
-        print(images.shape)
-        embs=facerec(images).cpu()
+        embs=[]
+        for _ in range(100):
+            images = torch.unsqueeze(transform_val(Image.fromarray(get_target_face(_,image100))).cuda(),0)
+            emb = facerec(images).cpu()[0].numpy()
+            embs.append(emb)
+        embs = np.array(embs)
+        print(embs.shape)
+        embs = torch.Tensor(embs)
+        print(embs.shape)
 
         fn='data/missing/'+img_id
         img = cv2.imread(fn)
@@ -451,7 +457,7 @@ with torch.no_grad():
 
         ab=torch.abs(embs-embedding)
         ab = torch.mean(ab,axis=1).cpu()
-        min_mse_face_no = torch.argmin(ab)
+        min_mse_face_no = int(torch.argmin(ab))
         print(img_id,min_mse_face_no)
         predictions['ImageID'].append(img_id.replace(".jpg", ""))
         predictions['target'].append(min_mse_face_no)
