@@ -83,6 +83,31 @@ def get_target_face(face_no, target_image):
 
     return target_face
 
+
+
+def get_negative_face(ids, image, image_a, mse_pos, transform):
+    face_in_img2 = random.choice(ids)
+    ids.remove(face_in_img2)
+    image2 = get_target_face(face_in_img2,image)
+    image_n = random_erase(image2)
+    if transform is not None:
+        image_n = transform(image_n)
+    mse_n = np.square(np.subtract(image_n, image_a)).mean() # in the worst case we will get triplet as in previous version
+    for i in range(10):
+        face_in_img2 = random.choice(ids)
+        ids.remove(face_in_img2)
+        image2 = get_target_face(face_in_img2,image)
+        image2 = random_erase(image2)
+        if transform is not None:
+            image2 = transform(image2)
+        mse2 = np.square(np.subtract(image2, image_a)).mean()
+        if mse2 < mse_n and mse2 > mse_pos:
+            image_n = image2
+            mse_n = mse2
+    return image_n
+    
+
+    
 class FaceDataset(torch.utils.data.Dataset):
     def __init__(self, path, transform):
         self.transform = transform
@@ -115,21 +140,33 @@ class FaceDataset(torch.utils.data.Dataset):
         # img_id2 = random.randint(0,len(self.images)-1)
         _ids = list(range(0,100))
         _ids.remove(face_in_img)
-        face_in_img2 = random.choice(_ids)
 
         # image100_2 = cv2.imread(self.images[img_id2])
         # image100_2 = self.images_loaded[img_id2]
         # image2 = get_target_face(face_in_img2,image100_2)
-        image2 = get_target_face(face_in_img2,image100)
         
+        # prepare anchor
         image_a = random_erase(image)
-        image_p = random_erase(image)
-        image_n = random_erase(image2)
-
+        # prepare positive
+        mse_pos = 0
         if self.transform is not None:
             image_a = self.transform(image_a)
-            image_p = self.transform(image_p)
-            image_n = self.transform(image_n)
+            for i in range(10):
+                img = random_erase(image)
+                img = self.transform(img)
+                mse = np.square(np.subtract(img, image_a)).mean()
+                if  mse > mse_pos:
+                    image_p = img
+                    mse_pos = mse
+        else:
+            for i in range(10):
+                img = random_erase(image) 
+                mse = np.square(np.subtract(img, image_a)).mean()
+                if  mse > mse_pos:
+                    image_p = img
+                    mse_pos = mse
+                    
+        image_n = get_negative_face(_ids, image100, image_a, mse_pos, self.transform)
             
         sample = {'anchor': image_a,
                   'pos': image_p,
