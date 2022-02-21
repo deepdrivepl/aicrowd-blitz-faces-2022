@@ -1,0 +1,5 @@
+classes = 4
+train  = /home/ubuntu/am/ai_blitz/aicrowd-blitz-faces-2022/mask_detection/data/train.txt
+valid  = /home/ubuntu/am/ai_blitz/aicrowd-blitz-faces-2022/mask_detection/data/val.txt
+names = /home/ubuntu/am/ai_blitz/aicrowd-blitz-faces-2022/mask_detection/obj.names
+backup = /home/ubuntu/am/ai_blitz/aicrowd-blitz-faces-2022/mask_detection/backup/
