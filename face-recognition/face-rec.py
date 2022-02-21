@@ -52,7 +52,9 @@ test_size=224
 
 
 
-def random_erase(img):
+def random_erase(img, do_erase=True):
+    if  do_erase==False:
+        return Image.fromarray(img)
     # img = np.array(pilimg)
 
     h,w,_ = img.shape
@@ -183,7 +185,7 @@ class FaceDataset(torch.utils.data.Dataset):
 
 
 augmentations = A.Compose(
-                [A.ShiftScaleRotate(shift_limit=0.2, scale_limit=0.1, rotate_limit=1, p=0.8),
+                [A.ShiftScaleRotate(shift_limit=0.4, scale_limit=0.1, rotate_limit=30, p=0.8),
                 A.RGBShift(r_shift_limit=40, g_shift_limit=40, b_shift_limit=40, p=0.9),
                 A.HorizontalFlip(p=0.5),
                 A.OneOf([
@@ -202,8 +204,8 @@ augmentations = A.Compose(
                          A.Posterize()]),
                 A.RandomGamma(p=0.5),
                 A.RandomBrightnessContrast(p=0.5),
-                A.RandomRain(brightness_coefficient=0.9, drop_width=1, blur_value=5, p=0.3),
-                A.ImageCompression(quality_lower=20, quality_upper=90,p=0.5)
+                # A.RandomRain(brightness_coefficient=0.9, drop_width=1, blur_value=5, p=0.3),
+                # A.ImageCompression(quality_lower=20, quality_upper=90,p=0.5)
                 ])
 
 transform_train = transforms.Compose([transforms.Resize([train_size, train_size]),
@@ -284,7 +286,10 @@ class FaceRecognition(LightningModule):
         
         self.setup()
         
-        self.loss=torch.nn.TripletMarginLoss()
+        # self.loss=torch.nn.TripletMarginLoss()
+        # self.loss=nn.TripletMarginWithDistanceLoss(distance_function=nn.CosineSimilarity())
+        self.loss=nn.TripletMarginWithDistanceLoss(distance_function=lambda x, y: 1.0 - torch.nn.functional.cosine_similarity(x, y))
+        
         self.lr = lr
         self.net = net
 
@@ -420,8 +425,8 @@ class FaceRecognition(LightningModule):
         print("total_steps:",total_steps) #drop last = True
 
         pct_start = 0.2
-        div_factor = 100
-        final_div_factor = 100
+        div_factor = 1000
+        final_div_factor = 1000
         d["lr_scheduler"] = {"scheduler": torch.optim.lr_scheduler.OneCycleLR(d['optimizer'],
                                             max_lr=self.lr,
                                             total_steps=total_steps,
@@ -462,8 +467,8 @@ net = getModel(backbone, train_size)
 
 
 
-freezed_epochs = 50
-unfreezed_epochs = 50
+freezed_epochs = 200
+unfreezed_epochs = 200
 lr_freezed = 1e-3
 lr_unfreezed = 1e-6
 
@@ -475,6 +480,8 @@ facerec = FaceRecognition(net, train_size=train_size, test_size=test_size,
                                 lr=lr_freezed,
                                 batch_size=batch_size_freezed)
 
+from torchinfo import summary
+summary(facerec, input_size=(1, 3, test_size, test_size))
 
 facerec.freeze(freezed_epochs)
 lr_monitor = pytorch_lightning.callbacks.LearningRateMonitor(logging_interval='step',
@@ -488,12 +495,12 @@ trainer = Trainer(gpus=1,
                   callbacks=[lr_monitor],
                 #   limit_val_batches=1
                   logger=logger)
-#trainer.fit(facerec)
+trainer.fit(facerec)
 del trainer
 
 
-#torch.save(facerec.net,backbone+'-transfer.pt')
-facerec.net = torch.load(backbone+'-transfer.pt')
+torch.save(facerec.net,backbone+'-transfer.pt')
+# facerec.net = torch.load(backbone+'-transfer.pt')
 
 facerec.lr = lr_unfreezed
 facerec.unfreeze(unfreezed_epochs)
